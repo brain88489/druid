@@ -27,7 +27,6 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ContainerState;
 import io.fabric8.kubernetes.api.model.ContainerStatus;
-import io.fabric8.kubernetes.api.model.Event;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodStatus;
@@ -68,7 +67,6 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * {@link TestcontainerResource} to run a K3s cluster which can launch Druid pods.
@@ -85,7 +83,6 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
 
   private static final String COMMON_CONFIG_MAP = "druid-common-props";
   private static final String SERVICE_CONFIG_MAP = "druid-%s-props";
-  private static final int POD_LOG_TAIL_LINES = 100;
   private static final Set<String> POD_FAILURE_REASONS = Set.of(
       "CrashLoopBackOff",
       "CreateContainerConfigError",
@@ -389,11 +386,11 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
       );
       final Pod currentPod = pod.get();
       if (isPodInFailureState(currentPod)) {
-        throw createPodDiagnosticException(pod, null, "Pod entered a failure state");
+        throw PodDiagnosticException.collect(client, pod, null, "Pod entered a failure state");
       }
     }
     catch (KubernetesClientTimeoutException e) {
-      throw createPodDiagnosticException(pod, e, "Timed out waiting for pod to be ready");
+      throw PodDiagnosticException.collect(client, pod, e, "Timed out waiting for pod to be ready");
     }
   }
 
@@ -407,11 +404,11 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
       );
       final Pod currentPod = pod.get();
       if (isPodInFailureState(currentPod)) {
-        throw createPodDiagnosticException(pod, null, "Pod entered a failure state");
+        throw PodDiagnosticException.collect(client, pod, null, "Pod entered a failure state");
       }
     }
     catch (KubernetesClientTimeoutException e) {
-      throw createPodDiagnosticException(pod, e, "Timed out waiting for pod to start");
+      throw PodDiagnosticException.collect(client, pod, e, "Timed out waiting for pod to start");
     }
   }
 
@@ -460,116 +457,6 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
     return state.getTerminated() != null &&
            (!Objects.equals(0, state.getTerminated().getExitCode()) ||
             !"Completed".equals(state.getTerminated().getReason()));
-  }
-
-  private ISE createPodDiagnosticException(PodResource pod, Throwable cause, String message)
-  {
-    final Pod currentPod = getCurrentPod(pod);
-    final String podName = currentPod == null || currentPod.getMetadata() == null
-                           ? "unknown"
-                           : currentPod.getMetadata().getName();
-    final String podStatus = describePodStatus(currentPod);
-    final String podEvents = getPodEvents(currentPod);
-    final String podLogTail = getPodLogTail(pod);
-    final String format = "%s for pod[%s]. Pod status[%s], pod events[%s], pod log tail[%s]";
-
-    if (cause == null) {
-      return new ISE(format, message, podName, podStatus, podEvents, podLogTail);
-    }
-    return new ISE(cause, format, message, podName, podStatus, podEvents, podLogTail);
-  }
-
-  private Pod getCurrentPod(PodResource pod)
-  {
-    try {
-      return pod.get();
-    }
-    catch (Exception e) {
-      return null;
-    }
-  }
-
-  private String describePodStatus(Pod pod)
-  {
-    final PodStatus status = pod == null ? null : pod.getStatus();
-    if (status == null) {
-      return "unavailable";
-    }
-
-    return StringUtils.format(
-        "phase[%s], conditions[%s], containerStatuses[%s], initContainerStatuses[%s]",
-        status.getPhase(),
-        status.getConditions(),
-        describeContainerStatuses(status.getContainerStatuses()),
-        describeContainerStatuses(status.getInitContainerStatuses())
-    );
-  }
-
-  private String describeContainerStatuses(List<ContainerStatus> containerStatuses)
-  {
-    if (containerStatuses == null) {
-      return "unavailable";
-    }
-
-    return containerStatuses.stream()
-                           .map(
-                               status -> StringUtils.format(
-                                   "name[%s], ready[%s], restartCount[%s], state[%s], lastStateTerminated[%s]",
-                                   status.getName(),
-                                   status.getReady(),
-                                   status.getRestartCount(),
-                                   status.getState(),
-                                   status.getLastState() == null ? null : status.getLastState().getTerminated()
-                               )
-                           )
-                           .collect(Collectors.joining(", "));
-  }
-
-  private String getPodEvents(Pod pod)
-  {
-    if (client == null || pod == null || pod.getMetadata() == null) {
-      return "unavailable";
-    }
-
-    final String namespace = pod.getMetadata().getNamespace();
-    final String podName = pod.getMetadata().getName();
-    if (namespace == null || podName == null) {
-      return "unavailable";
-    }
-
-    try {
-      final List<Event> events = client.v1()
-                                       .events()
-                                       .inNamespace(namespace)
-                                       .withField("involvedObject.name", podName)
-                                       .list()
-                                       .getItems();
-      return events.stream()
-                   .map(
-                       event -> StringUtils.format(
-                           "type[%s], reason[%s], message[%s], count[%s], lastTimestamp[%s]",
-                           event.getType(),
-                           event.getReason(),
-                           event.getMessage(),
-                           event.getCount(),
-                           event.getLastTimestamp()
-                       )
-                   )
-                   .collect(Collectors.joining("; "));
-    }
-    catch (Exception e) {
-      return StringUtils.format("unavailable: %s", e.getMessage());
-    }
-  }
-
-  private String getPodLogTail(PodResource pod)
-  {
-    try {
-      return pod.tailingLines(POD_LOG_TAIL_LINES).getLog();
-    }
-    catch (Exception e) {
-      return StringUtils.format("unavailable: %s", e.getMessage());
-    }
   }
 
   private void dumpKubernetesPodLogs()
