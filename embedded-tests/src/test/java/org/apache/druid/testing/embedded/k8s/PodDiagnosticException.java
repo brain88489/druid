@@ -48,7 +48,7 @@ public final class PodDiagnosticException extends ISE
     super(cause, formatText, arguments);
   }
 
-  public static PodDiagnosticException collect(
+  public static PodDiagnosticException create(
       KubernetesClient client,
       PodResource pod,
       Throwable cause,

@@ -59,7 +59,6 @@ import java.io.InputStream;
 import java.io.StringWriter;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -257,7 +256,9 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
   @Override
   public void stop()
   {
-    dumpKubernetesPodLogs();
+    if (client != null && isRunning()) {
+      new PodLogCollector(client).collectTo(containerLogsDirectory);
+    }
     try {
       closer.close();
     }
@@ -386,11 +387,11 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
       );
       final Pod currentPod = pod.get();
       if (isPodInFailureState(currentPod)) {
-        throw PodDiagnosticException.collect(client, pod, null, "Pod entered a failure state");
+        throw PodDiagnosticException.create(client, pod, null, "Pod entered a failure state");
       }
     }
     catch (KubernetesClientTimeoutException e) {
-      throw PodDiagnosticException.collect(client, pod, e, "Timed out waiting for pod to be ready");
+      throw PodDiagnosticException.create(client, pod, e, "Timed out waiting for pod to be ready");
     }
   }
 
@@ -404,11 +405,11 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
       );
       final Pod currentPod = pod.get();
       if (isPodInFailureState(currentPod)) {
-        throw PodDiagnosticException.collect(client, pod, null, "Pod entered a failure state");
+        throw PodDiagnosticException.create(client, pod, null, "Pod entered a failure state");
       }
     }
     catch (KubernetesClientTimeoutException e) {
-      throw PodDiagnosticException.collect(client, pod, e, "Timed out waiting for pod to start");
+      throw PodDiagnosticException.create(client, pod, e, "Timed out waiting for pod to start");
     }
   }
 
@@ -457,51 +458,6 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
     return state.getTerminated() != null &&
            (!Objects.equals(0, state.getTerminated().getExitCode()) ||
             !"Completed".equals(state.getTerminated().getReason()));
-  }
-
-  private void dumpKubernetesPodLogs()
-  {
-    if (client == null || containerLogsDirectory == null || !isRunning()) {
-      return;
-    }
-
-    try {
-      FileUtils.mkdirp(containerLogsDirectory);
-      final List<Pod> pods = client.pods().inAnyNamespace().list().getItems();
-      if (pods != null) {
-        pods.forEach(this::dumpKubernetesPodLog);
-      }
-    }
-    catch (Exception e) {
-      log.warn(e, "Could not list Kubernetes pods for log collection");
-    }
-  }
-
-  private void dumpKubernetesPodLog(Pod pod)
-  {
-    final ObjectMeta metadata = pod.getMetadata();
-    if (metadata == null || metadata.getNamespace() == null || metadata.getName() == null) {
-      return;
-    }
-
-    final String namespace = metadata.getNamespace();
-    final String podName = metadata.getName();
-    final File logFile = new File(
-        containerLogsDirectory,
-        StringUtils.format("%s-%s.log", namespace, podName)
-    );
-
-    try {
-      final String podLog = client.pods()
-                                 .inNamespace(namespace)
-                                 .withName(podName)
-                                 .getLog();
-      Files.writeString(logFile.toPath(), podLog, StandardCharsets.UTF_8);
-      log.info("Wrote Kubernetes pod log[%s]", logFile);
-    }
-    catch (Exception e) {
-      log.warn(e, "Could not dump log for Kubernetes pod[%s] in namespace[%s]", podName, namespace);
-    }
   }
 
   /**
