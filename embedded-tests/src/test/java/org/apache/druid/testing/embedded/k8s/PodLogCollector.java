@@ -55,7 +55,7 @@ public final class PodLogCollector
       FileUtils.mkdirp(logDir);
       final List<Pod> pods = client.pods().inAnyNamespace().list().getItems();
       if (pods != null) {
-        pods.forEach(pod -> dumpKubernetesPodLog(pod, logDir));
+        pods.forEach(pod -> collectTo(pod, logDir));
       }
     }
     catch (Exception e) {
@@ -63,7 +63,7 @@ public final class PodLogCollector
     }
   }
 
-  private void dumpKubernetesPodLog(Pod pod, File logDir)
+  private void collectTo(Pod pod, File logDir)
   {
     final ObjectMeta metadata = pod.getMetadata();
     if (metadata == null || metadata.getNamespace() == null || metadata.getName() == null) {
