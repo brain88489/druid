@@ -82,14 +82,9 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
 
   private static final String COMMON_CONFIG_MAP = "druid-common-props";
   private static final String SERVICE_CONFIG_MAP = "druid-%s-props";
-  private static final Set<String> POD_FAILURE_REASONS = Set.of(
-      "CrashLoopBackOff",
-      "CreateContainerConfigError",
-      "CreateContainerError",
-      "ErrImagePull",
-      "ImagePullBackOff",
-      "InvalidImageName",
-      "RunContainerError"
+  private static final Set<String> POD_NON_FAILURE_WAITING_REASONS = Set.of(
+      "ContainerCreating",
+      "PodInitializing"
   );
 
   public static final long POD_READY_TIMEOUT_SECONDS = 300;
@@ -451,8 +446,11 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
     }
 
     final ContainerState state = containerStatus.getState();
-    if (state.getWaiting() != null && POD_FAILURE_REASONS.contains(state.getWaiting().getReason())) {
-      return true;
+    if (state.getWaiting() != null) {
+      final String waitingReason = state.getWaiting().getReason();
+      if (waitingReason == null || !POD_NON_FAILURE_WAITING_REASONS.contains(waitingReason)) {
+        return true;
+      }
     }
 
     return state.getTerminated() != null &&
