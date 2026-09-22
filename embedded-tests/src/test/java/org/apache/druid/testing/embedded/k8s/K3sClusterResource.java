@@ -244,6 +244,24 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
     client.pods().inNamespace(namespace).resources().forEach(this::waitUntilPodIsRunning);
   }
 
+  private void waitUntilPodIsRunning(PodResource pod)
+  {
+    try {
+      pod.waitUntilCondition(
+          p -> isPodRunning(p) || isPodInFailureState(p),
+          POD_READY_TIMEOUT_SECONDS,
+          TimeUnit.SECONDS
+      );
+      final Pod currentPod = pod.get();
+      if (isPodInFailureState(currentPod)) {
+        throw PodDiagnosticException.create(client, pod, null, "Pod entered a failure state");
+      }
+    }
+    catch (KubernetesClientTimeoutException e) {
+      throw PodDiagnosticException.create(client, pod, e, "Timed out waiting for pod to start");
+    }
+  }
+
   /**
    * Exposes the fabric8 {@link KubernetesClient} for tests that need to interact
    * with the cluster directly (e.g. discover task-launched peon pods).
@@ -392,24 +410,6 @@ public class K3sClusterResource extends TestcontainerResource<K3sContainer>
     }
     catch (KubernetesClientTimeoutException e) {
       throw PodDiagnosticException.create(client, pod, e, "Timed out waiting for pod to be ready");
-    }
-  }
-
-  private void waitUntilPodIsRunning(PodResource pod)
-  {
-    try {
-      pod.waitUntilCondition(
-          p -> isPodRunning(p) || isPodInFailureState(p),
-          POD_READY_TIMEOUT_SECONDS,
-          TimeUnit.SECONDS
-      );
-      final Pod currentPod = pod.get();
-      if (isPodInFailureState(currentPod)) {
-        throw PodDiagnosticException.create(client, pod, null, "Pod entered a failure state");
-      }
-    }
-    catch (KubernetesClientTimeoutException e) {
-      throw PodDiagnosticException.create(client, pod, e, "Timed out waiting for pod to start");
     }
   }
 
